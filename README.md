@@ -66,7 +66,7 @@ python test_client.py     # 冒烟：真机跑一遍 10 个调用
 | close_mumu_app_on_exit | MUMU_CLOSE_APP_ON_EXIT | true | 收手时结束 MuMu 进程 |
 | enable_shell_tool | MUMU_ENABLE_SHELL_TOOL | false | 是否允许执行 adb shell |
 | daily_play_limit_minutes | MUMU_DAILY_LIMIT_MINUTES | 0（不限） | 每日玩手机时长上限 |
-| mode_default_minutes | — | 30 | mumu_phone_play 默认限时 |
+| mode_default_minutes | — | 10 | mumu_phone_play 默认限时 |
 | control_port | MUMU_CONTROL_PORT | 8791 | 本机控制口端口（给 QQ 桥用） |
 | dsh_http_url | MUMU_DSH_HTTP_URL | http://127.0.0.1:3080 | DSH 的 HTTP 地址 |
 | qq_say_path | — | /dsh-qq-bridge-mumu/say | 真发 QQ 的接口 |
@@ -110,6 +110,8 @@ python test_client.py     # 冒烟：真机跑一遍 10 个调用
 ## 自主玩（随机玩手机）
 
 `autoplay_enable` 默认 **关**。打开后 `autoplay.py` 会按活跃时段（默认 09:00-23:30）、每日时长上限、每日次数、以及「你多久没找她聊了」（默认 30 分钟没消息才算空闲）来决定要不要自己开一轮；目标从目标池里轮转取（默认：刷一刷 / 玩游戏 / 看抖音 / 逛taptap）。
+
+> **可以被 [dsh-mumu-up](https://github.com/1154450477/dsh-mumu-up) 接管**：装了手机唤醒器的话，建议别开这里的 `autoplay_enable`——mumu-up 自己会掷骰决定什么时候叫她玩（峰谷命中线 / 没中加成 / 时机因子那套判定，比这里的定时轮询更像真人），两套同时开会重复叫她。定时计划（`mumu_phone_autoplay schedule`）不受影响，照常到点开。
 
 ## 数据落在哪
 
