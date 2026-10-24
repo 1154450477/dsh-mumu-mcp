@@ -221,24 +221,115 @@ class AdbClient:
         await asyncio.sleep(0.4)
 
     # ------------------------------------------------------------------ 输入
+
+    # ⭐ 2026-10-24：触屏注入统一走 sendevent 原始协议（/dev/input/event4「Xiaomi
+    #   Touchscreen」，MT 协议 B）。`input tap/swipe` 注入的是 TOOL_TYPE_FINGER 合成
+    #   事件，Android 15 上开心消消乐等游戏不认（点不动/拖不动）；sendevent 写内核
+    #   事件流，游戏 100% 收到（实测：登录页按钮/协议弹窗全部正常响应）。
+    #   事件节点探测一次缓存；sendevent 失败（无权限/节点变了）再回退 input 命令。
+    _触屏节点: str | None = None
+    _触屏节点探测过: bool = False
+
+    async def _触屏事件节点(self) -> str | None:
+        if self._触屏节点探测过:
+            return self._触屏节点
+        self._触屏节点探测过 = True
+        try:
+            # INPUT_PROP_DIRECT 只出现在真触屏（DIRECT = 触屏而不是触控板）；设备头行
+            # 「add device N: /dev/input/eventX」离 props 行可能隔了整个事件表，窗口放大到 30。
+            out = await self.shell(
+                "getevent -pl 2>/dev/null | grep -B30 INPUT_PROP_DIRECT | grep 'add device' | tail -1",
+                timeout=15,
+            )
+            # 「add device 4: /dev/input/event4」→ 抠出路径
+            import re as _re
+            m = _re.search(r"/dev/input/event\d+", out)
+            if m:
+                self._触屏节点 = m.group(0)
+        except Exception:
+            self._触屏节点 = None
+        return self._触屏节点
+
+    async def _sendevent_touch(self, 序列: list[tuple[int, int, int]], 节点: str) -> None:
+        """把 [(type, code, value), ...] 逐条 sendevent 写进触屏节点。"""
+        cmd = "; ".join(f"sendevent {节点} {t} {c} {v}" for t, c, v in 序列)
+        await self.shell(cmd, timeout=20)
+
+    async def _触摸按下(self, 节点: str, x: int, y: int, tid: int) -> list[tuple[int, int, int]]:
+        # MT 协议 B：SLOT/TRACKING_ID/X/Y + BTN_TOUCH + SYN_REPORT(0,0,0)
+        return [
+            (3, 47, 0),        # ABS_MT_SLOT 0
+            (3, 57, tid),      # ABS_MT_TRACKING_ID
+            (3, 53, x),        # ABS_MT_POSITION_X
+            (3, 54, y),        # ABS_MT_POSITION_Y
+            (1, 330, 1),       # BTN_TOUCH DOWN
+            (0, 0, 0),         # SYN_REPORT
+        ]
+
+    async def _触摸移动(self, 节点: str, x: int, y: int) -> list[tuple[int, int, int]]:
+        return [(3, 53, x), (3, 54, y), (0, 0, 0)]
+
+    async def _触摸抬起(self, 节点: str, tid: int) -> list[tuple[int, int, int]]:
+        return [
+            (1, 330, 0),       # BTN_TOUCH UP
+            (3, 57, -1),       # TRACKING_ID 结束
+            (0, 0, 0),         # SYN_REPORT
+        ]
+
     async def tap(self, x: int, y: int) -> None:
+        节点 = await self._触屏事件节点()
+        if 节点:
+            try:
+                await self._sendevent_touch(
+                    await self._触摸按下(节点, int(x), int(y), 99001)
+                    + await self._触摸抬起(节点, 99001),
+                    节点,
+                )
+                return
+            except Exception:
+                pass
         await self.shell(f"input tap {int(x)} {int(y)}", timeout=15)
 
     async def long_press(self, x: int, y: int, duration_ms: int = 800) -> None:
-        duration_ms = int(util.clamp(duration_ms, 300, 5000))
-        await self.shell(
-            f"input swipe {int(x)} {int(y)} {int(x)} {int(y)} {duration_ms}",
-            timeout=20,
-        )
+        await self.swipe(int(x), int(y), int(x), int(y), duration_ms)
 
     async def swipe(
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
     ) -> None:
         duration_ms = int(util.clamp(duration_ms, 30, 5000))
-        await self.shell(
-            f"input swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {duration_ms}",
-            timeout=20,
+        节点 = await self._触屏事件节点()
+        if 节点:
+            try:
+                steps = max(3, min(12, int(duration_ms / 50)))
+                tid = 99002
+                序列 = await self._触摸按下(节点, int(x1), int(y1), tid)
+                for i in range(1, steps):
+                    序列 += await self._触摸移动(
+                        节点,
+                        int(x1 + (x2 - x1) * i / steps),
+                        int(y1 + (y2 - y1) * i / steps),
+                    )
+                序列 += await self._触摸抬起(节点, tid)
+                await self._sendevent_touch(序列, 节点)
+                return
+            except Exception:
+                pass
+        # 兜底 1：input motionevent（原始 MotionEvent）；兜底 2：input swipe
+        steps = max(3, min(12, int(duration_ms / 50)))
+        cmd = (
+            f"input motionevent DOWN {int(x1)} {int(y1)}; "
+            + " ".join(
+                f"input motionevent MOVE {int(x1 + (x2 - x1) * i / steps)} {int(y1 + (y2 - y1) * i / steps)};"
+                for i in range(1, steps)
+            )
+            + f" input motionevent UP {int(x2)} {int(y2)}"
         )
+        r = await self.shell(cmd, timeout=20)
+        if "Exception" in r or "Error" in r:
+            await self.shell(
+                f"input swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {duration_ms}",
+                timeout=20,
+            )
 
     async def key(self, name_or_code: str | int) -> None:
         if isinstance(name_or_code, int) or str(name_or_code).isdigit():

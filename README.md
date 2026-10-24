@@ -69,7 +69,7 @@ python test_client.py     # 冒烟：真机跑一遍 10 个调用
 | mode_default_minutes | — | 10 | mumu_phone_play 默认限时 |
 | control_port | MUMU_CONTROL_PORT | 8791 | 本机控制口端口（给 QQ 桥用） |
 | dsh_http_url | MUMU_DSH_HTTP_URL | http://127.0.0.1:3080 | DSH 的 HTTP 地址 |
-| qq_say_path | — | /dsh-qq-bridge-mumu/say | 真发 QQ 的接口 |
+| qq_say_path | — | /dsh-qq-bridge/say | 真发 QQ 的接口 |
 | qq_turn_path | — | /dsh-qq-bridge-mumu/turn | 起一轮对话的接口 |
 | pending_max_age_hours | — | 3 | 挂起消息留多久 |
 | autoplay_enable | MUMU_AUTOPLAY_ENABLE | false | 自主玩手机总开关 |
@@ -84,6 +84,8 @@ python test_client.py     # 冒烟：真机跑一遍 10 个调用
 
 观察：`mumu_phone_status` / `mumu_phone_screen` / `mumu_phone_frames` / `mumu_phone_ui`
 操作：`mumu_phone_tap` / `mumu_phone_swipe` / `mumu_phone_scroll` / `mumu_phone_text` / `mumu_phone_key`
+
+> **触摸注入说明（2026-10-24）**：tap / swipe / long_press 优先走 **sendevent 原始协议**（自动探测 `INPUT_PROP_DIRECT` 真触屏节点，MT 协议 B 事件流）——Android 15 上 `input tap/swipe` 的合成事件很多游戏不认（点不动/拖不动），sendevent 写内核事件流游戏 100% 收到。sendevent 失败时自动降级：`input motionevent` → `input swipe`。
 系统：`mumu_phone_app` / `mumu_phone_system` / `mumu_phone_notifications` / `mumu_phone_shell`（默认关）
 会话：`mumu_phone_play` / `mumu_phone_exit` / `mumu_phone_diary` / `mumu_phone_recent` / `mumu_phone_autoplay`
 互通：`mumu_phone_messages`（看待回的消息）/ `mumu_phone_say`（真发 QQ）/ `mumu_phone_random_goal`（从目标池抽一个）
@@ -94,7 +96,7 @@ python test_client.py     # 冒烟：真机跑一遍 10 个调用
 
 1. **入队**：QQ 桥发现 MuMu 正在玩，就把你的消息 POST 到本机的控制口（`POST /pending`），并按冷却时间回你一句（她自己的口气）。队列存在 `state.json` 里，默认留 3 小时。
 2. **她能看到**：每个工具的返回尾部都会带一段 pending 提示（`mumu_phone_messages` 可查，`action=handled` 可标记已读）。
-3. **回你**：她要回你时用 `mumu_phone_say(text=..., msg_id=...)` —— 这条会经 QQ 桥的 `/dsh-qq-bridge-mumu/say` 真发到 QQ，并自动把那条挂起标记成已处理。
+3. **回你**：她要回你时用 `mumu_phone_say(text=..., msg_id=...)` —— 这条会经 QQ 桥的 `/dsh-qq-bridge/say` 真发到 QQ，并自动把那条挂起标记成已处理。
 4. **收手**：QQ 桥命中停手关键词时 POST `/exit`，她立刻收手并回「好，手机收起来了。」
 
 本机控制口（默认 127.0.0.1:8791）：
